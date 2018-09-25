@@ -1,0 +1,126 @@
+---
+title: "Distance to City Centery and Cardinal Direction Location"
+author: "Michael Pennino"
+date: "November 18, 2017"
+output: html_document
+---
+
+* This calculates the distance of all points to a certain "center"" point and also determines what quadrant that point is relative to the center point. 
+
+# IMPORT DATA
+```{r}
+
+dir = '...'
+
+# SWM Facility Locations
+swm05 = readOGR(paste(dir,'GIS/DC/Green_Infrastructure/By_Year/MC_SWM_2005.shp',sep=""))
+swm14 = readOGR(paste(dir,'GIS/DC/Green_Infrastructure/By_Year/MC_SWM_2014.shp',sep=""))
+
+#************************************************************
+# CENSUS BLOCK GROUPS
+
+BG15 = readOGR(paste0(dir,'/GIS/DC/Census/Montgomery_County/Census Block Groups'),
+               'MontgomeryCo_Block_Groups_2015_usgs')
+
+DC = readOGR(paste0(dir,'GIS/DC/Data Gateway/Boundaries/DC Boundary/DC_Boundary.shp'))
+
+# Change projection 
+swm05 <- spTransform(swm05, CRS("+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=23 +lon_0=-96 +x_0=0 +y_0=0 +datum=NAD83 +units=m +no_defs +ellps=GRS80 +towgs84=0,0,0"))
+swm14 <- spTransform(swm14, CRS("+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=23 +lon_0=-96 +x_0=0 +y_0=0 +datum=NAD83 +units=m +no_defs +ellps=GRS80 +towgs84=0,0,0"))
+BG15 <- spTransform(BG15, CRS("+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=23 +lon_0=-96 +x_0=0 +y_0=0 +datum=NAD83 +units=m +no_defs +ellps=GRS80 +towgs84=0,0,0"))
+DC <- spTransform(DC, CRS("+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=23 +lon_0=-96 +x_0=0 +y_0=0 +datum=NAD83 +units=m +no_defs +ellps=GRS80 +towgs84=0,0,0"))
+
+projection(swm05)
+projection(swm14)
+projection(BG15)
+projection(DC)
+
+
+```
+
+# Plot
+```{r}
+plot(BG15)
+plot(DC,border='green',add=T)
+
+plot(swm14,col='red',add=T)
+plot(swm05,col='blue',add=T)
+
+# Plot just DC
+plot(DC)
+
+```
+
+# Find center point for DC
+```{r}
+
+# Based on Centroid of DC Polygon
+DC_center = gCentroid(DC,byid=TRUE) #obtains the point at the centroid of a polygon 
+
+plot(DC)
+plot(DC_center,col='red',add=T)
+
+# Based on coordinates of Washington DC at intersection of Rhode Island Avenue NW and Massachusetts Avenue NW, Washington, DC
+# Used Google Earth to obtain coordinates for this location: Lat:  38Â°54'26.02"N, Long:  77Â° 2'11.51"W
+# Using the Web, I conerted this to decimal degress: (38.907228N, 77.036531W)
+
+#******************************************
+# DOESN'T SEEM TO LINE UP"
+# Using SpatialPoints function: Create Objects Of Class SpatialPoints Or SpatialPointsDataFrame
+#coords = c(38.907228, 77.036531)
+library(rgdal)
+x = 77.036531
+y = 38.907228
+d <- data.frame(lon=x, lat=y)
+coordinates(d) <- c("lon", "lat")
+proj4string(d) <- CRS("+init=epsg:4326") # WGS 84
+d <- spTransform(d, CRS("+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=23 +lon_0=-96 +x_0=0 +y_0=0 +datum=NAD83 +units=m +no_defs +ellps=GRS80 +towgs84=0,0,0"))
+
+plot(DC)
+plot(d,col='red',add=T)
+
+#******************************************
+DC_center2 = DC_center
+DC_center2$ID = "1"
+DC_center2 = SpatialPointsDataFrame(DC_center2[,c('DC_center2','y')],DC_center2[,'ID'])
+
+DC_center2
+dat_2 <- SpatialPointsDataFrame(dat_orig[,c("lng", "lat")], dat_orig[,1:5])
+
+
+writeOGR(DC_center, layer="Washington_DC_Centroid", paste0(dir,'GIS/DC/City_Center'), driver="ESRI Shapefile")
+
+City_Center = readOGR(paste(dir,'GIS/DC/City_Center',sep=""),'Washington_DC_Centroid')
+
+
+```
+
+
+# Calculate Distance to DC Center
+```{r}
+
+plot(swm05)
+plot(swm05[swm05$OBJECTID == '99',],col='red',add=T)
+plot(DC_center,col='blue',add=T)
+
+projection(swm05)
+projection(DC_center)
+
+# Get Lat/Lon
+d = DC_center
+d$x = as.numeric(d$x)
+d$y = as.numeric(d$y)
+
+pj <- project(d, proj4string)
+latlon <- data.frame(lat=pj$y, lon=pj$x)
+print(latlon)
+
+
+library(geosphere)
+distm (swm05[swm05$OBJECTID == '99',] , DC_center, fun = distHaversine)
+
+
+```
+
+
+
