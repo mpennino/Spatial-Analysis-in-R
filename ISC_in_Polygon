@@ -1,0 +1,217 @@
+---
+title: "ISC in Polygon"
+author: "Michael Pennino"
+date: "November 17, 2017"
+output: html_document
+---
+
+# ISC in Buffers
+* Calculates the % of impervious surface cover (ISC) within defined buffers (polygons)
+* ISC data was downloded from here: https://www.mrlc.gov/
+
+# IMPORTING DATA
+```{r}
+
+library(sp)
+library(ggplot2)
+library(raster)
+library(rgdal)
+library(rgeos)
+library(maptools)
+library(foreign)
+
+##########################################################
+# IMPORTING DATA
+#*********************************************************
+
+dir = "..."
+
+
+# POLYGON ZONES OR REGIONS
+
+# CENSUS BLOCK GROUPS
+BG00 = readOGR(paste0(dir,'/GIS/DC/Census/Montgomery_County/Census Block Groups'),
+               'MontgomeryCo_Block_Groups_2000_usgs')
+BG15 = readOGR(paste0(dir,'/GIS/DC/Census/Montgomery_County/Census Block Groups'),
+               'MontgomeryCo_Block_Groups_2015_usgs')
+
+
+# State Boundary
+MD = readOGR(paste0(dir,'GIS/MD/NRCS Data Gateway/Boundaries/State'),
+             'state_nrcs_a_md')
+BG_MD = readOGR(paste0(dir,'GIS/MD/Census/CENSUS 2000/Boundary2000'),
+                'Block_Groups_MD_2000_usgs')
+
+# BUFFERS (Created in ArcGIS)
+MC_SWM_2005_buff = readOGR(paste0(dir,'GIS/DC/Green_Infrastructure/GI_Buffer'),
+                 'MC_SWM_2005_16th_mile_buff')
+
+MC_SWM_2014_buff = readOGR(paste0(dir,'GIS/DC/Green_Infrastructure/GI_Buffer'),
+                           'MC_SWM_2014_16th_mile_buff')
+
+# Add STRU_NO number to the GI Buffers
+MC_SWM_2005_buff$STRU_NO=  seq.int(nrow(MC_SWM_2005_buff))
+MC_SWM_2014_buff$STRU_NO=  seq.int(nrow(MC_SWM_2014_buff))
+
+# NO_GI_BUFFER (The CONTROL)
+
+# For 1/8 mile separation
+No_GI_buff14 = readOGR(paste0(dir,'GIS/DC/Green_Infrastructure/GI_Buffer'),
+                       'No_GI_buff14_16th_mile_8thSep_Mont') 
+
+# project to be same as other buffers
+No_GI_buff14 <- spTransform(No_GI_buff14, CRS("+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=23 +lon_0=-96 +x_0=0 +y_0=0 +datum=NAD83 +units=m +no_defs +ellps=GRS80 +towgs84=0,0,0"))
+
+buff05 = MC_SWM_2005_buff
+buff14 = MC_SWM_2014_buff
+
+projection(buff05)
+projection(buff14)
+projection(No_GI_buff14)
+
+# Subset the data
+
+buff05 = buff05[,c("OBJECTID","STRU_NO","YEAR_FINAL")]
+buff14 = buff14[,c("OBJECTID","STRU_NO","YEAR_FINAL")]
+
+# RASTER DATA 
+# imperv01.raw = raster("J:/GIS/MD/NLCD/NLCD2001/md_dc_imper01")
+# imperv11.raw = raster("J:/GIS/MD/NLCD/NLCD2011/md_dc_imper11")
+imperv01.raw = raster(paste0(dir,'GIS/National/NLCD/NLCD2001/nlcd_2001_impervious/nlcd_2001_impervious_2011_edition_2014_10_10.img'))
+imperv11.raw = raster(paste0(dir,'GIS/National/NLCD/NLCD2011/nlcd_2011_impervious/nlcd_2011_impervious_2011_edition_2014_10_10.img'))
+
+```
+
+# SELECT DATA
+```{r}
+#*********************************************************************
+#()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()
+#*********************************************************************
+# Convert to Common Name to USE in ANALYSIS
+REGION = No_GI_buff14 # could be buff05, buff14, No_GI_buff14
+RASTER.raw = imperv11.raw # could be imperv01.raw or imperv11.raw
+BC = BG15 # could be BG00 or BG15
+#*********************************************************************
+#()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()
+#*********************************************************************
+```
+
+# Clip and Plot Raster
+```{r}
+# Clip to specific extent
+#RASTER.raw = crop(RASTER.raw,BC)
+RASTER.raw = crop(RASTER.raw,BC)
+
+plot(RASTER.raw)
+
+```
+
+# Reclassify ISC data
+```{r}
+
+#**********************************************************
+
+vals<-unique(values(RASTER.raw))
+vals2 = sort(vals,decreasing = F) # sorting from low to high
+vals
+vals2
+
+# recl<-matrix(c(vals, c(0, rep(1, 6), 9, 1,1, 13)),ncol=2) example
+recl<-matrix(c(vals2, c(seq(0,100,by=1))),ncol=2) # old and new values (column 1,2, respectively)
+recl
+
+ISC<-reclassify(RASTER.raw, rcl=recl)
+plot(ISC, legend=FALSE, axes=FALSE)
+
+```
+
+# Extract the values of the landcover raster for each zone. 
+* This produces a list of raster cells for each region
+```{r}
+# crop, rasterize and mask 
+cr<-crop(ISC, REGION)
+fr<-rasterize(REGION, cr)
+lr<-mask(x=cr, mask=fr)
+
+# You can do the same calculation using the full state raster
+# ext<-extract(RASTER, REGION, method='simple')
+
+# this takes a little time
+detach(package:tidyr) 
+ext<-extract(lr, REGION, method='simple',by.id=TRUE) #by.id=T for overlapping buffers
+class(ext)  # a list
+## [1] "list"
+length(ext) # three elements, a vector of land use values for each region
+## [1]  3472 for buff05, 9055 for buff14, 7818 for No_GI 1/8 sep 
+
+
+```
+
+# Tabulate ISC
+```{r}
+
+# Function to tabulate land use by region and return a data.frame
+tabFunc<-function(indx, extracted, region, regname) {
+  dat<-as.data.frame(table(extracted[[indx]]))
+  dat$name<-region[[regname]][[indx]]
+  return(dat)
+}
+
+#*********************************************************************
+#()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()
+#*********************************************************************
+# runs through each region and compute a table of the count
+# of raster cells by land use. Produces a list (see below)
+tabs<-lapply(seq(ext), tabFunc, ext, REGION, "ID") # change to "STRU_NO if SWM buffers,"ID" if No_GI_Buff, "GEO_ID" if Block Groups
+#*********************************************************************
+#()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()
+#*********************************************************************
+
+```
+
+# Calculate % ISC
+```{r}
+
+# assemble into one data frame
+tabs<-do.call("rbind",tabs )
+
+# convert var1 to numeric (this is the % ISC for each cell)
+tabs$Var1 = as.numeric(as.character(tabs$Var1))
+
+# use the spread function from tidyr to make nicer
+library(dplyr)
+library(tidyr)
+
+#*****************************
+# Calculates % ISC for each Buffer
+ISC_Table = tabs%>% 
+  group_by(name) %>% # group by Facility STRU_NO
+  summarize(totcells=sum(Freq), # total number of raster cells within each facility
+            percent.ISC = sum(Var1*Freq)/totcells)
+
+
+
+```
+
+# Change Name and Write Out
+```{r}
+#*********************************************************************
+#()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()
+#*********************************************************************
+names(ISC_Table)[1] = "ID"  # Use STRU_NO for Buffers, "ID" for random points, GEO_ID for Block Groups
+#*********************************************************************
+#()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()
+#*********************************************************************
+
+# write.csv(ISC_Table, paste0(dir,'GIS/DC/NLCD/ISC2001_MontCo_GI_Buffer2005.csv'), row.names=F)
+# write.csv(ISC_Table, paste0(dir,'GIS/DC/NLCD/ISC2011_MontCo_GI_Buffer2014.csv'), row.names=F)
+
+# write.csv(ISC_Table, paste0(dir,'GIS/DC/NLCD/ISC2001_MontCo_No_GI_Buffer2014_8thSep.csv'), row.names=F)
+# write.csv(ISC_Table, paste0(dir,'GIS/DC/NLCD/ISC2011_MontCo_No_GI_Buffer2014_8thSep.csv'), row.names=F)
+
+
+```
+
+
+
+
