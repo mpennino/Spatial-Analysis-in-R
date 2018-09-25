@@ -1,0 +1,258 @@
+---
+title: "LULC in GI Buffer for Montgomery County"
+author: "Michael Pennino"
+date: "November 18, 2017"
+output: html_document
+---
+
+# LULC in Buffers
+* This calculates the % land use/land cover based on the National Land Cover Database (NLCD) with defined buffers (polygons)
+* NLCD data was downloded from here: https://www.mrlc.gov/
+
+* NLCD LEGEND
+* https://www.mrlc.gov/nlcd06_leg.php
+ 
+* 81-->8 = Pasture/Hay 
+* 82-->8 = Cultivated Crops
+* 41-->4 = Deciduous Forest
+* 42-->4 = Evergreen Forest 
+* 43-->4 = 	Mixed Forest
+* 21-->2 = Developed, Open Space
+* 22-->2 = Developed, Low Intensity 
+* 23-->2 = Developed, Medium Intensity
+* 24-->2 = Developed High Intensity
+* 31-->3 = Barren Land (Rock/Sand/Clay)
+* 52-->5 = Shrub/Scrub 
+* 71-->7 = Grassland/Herbaceous
+* 90-->9 = Woody Wetlands
+* 95-->9 = Emergent Herbaceous Wetlands
+* 11-->9 = Open Water
+
+* 4 = Forest
+* 8 = Ag
+* 2 = Developed
+* 3 = Barren
+* 5 = Shrub
+* 7 = Grassland
+* 1 = Water
+* 9 = Wetland
+
+# IMPORT DATA
+```{r}
+##########################################################
+# IMPORTING DATA
+#*********************************************************
+# POLYGON ZONES OR REGIONS
+dir = '...'
+
+# CENSUS BLOCK GROUPS
+BG00 = readOGR(paste0(dir,'/GIS/DC/Census/Montgomery_County/Census Block Groups'),
+               'MontgomeryCo_Block_Groups_2000_usgs')
+BG15 = readOGR(paste0(dir,'/GIS/DC/Census/Montgomery_County/Census Block Groups'),
+               'MontgomeryCo_Block_Groups_2015_usgs')
+
+# BUFFERS (created in ArcGIS around point locations)
+MC_SWM_2005_buff = readOGR(paste0(dir,'GIS/DC/Green_Infrastructure/GI_Buffer'),
+                 'MC_SWM_2005_16th_mile_buff')
+
+MC_SWM_2014_buff = readOGR(paste0(dir,'GIS/DC/Green_Infrastructure/GI_Buffer'),
+                           'MC_SWM_2014_16th_mile_buff')
+
+# Add STRU_NO number to the GI Buffers
+MC_SWM_2005_buff$STRU_NO=  seq.int(nrow(MC_SWM_2005_buff))
+MC_SWM_2014_buff$STRU_NO=  seq.int(nrow(MC_SWM_2014_buff))
+
+# NO_GI_BUFFER (the CONTROL)
+# For 1/8 mile separation
+No_GI_buff14 = readOGR(paste0(dir,'GIS/DC/Green_Infrastructure/GI_Buffer'),
+                       'No_GI_buff14_16th_mile_8thSep_Mont') 
+
+# project to be same as other buffers
+No_GI_buff14 <- spTransform(No_GI_buff14, CRS("+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=23 +lon_0=-96 +x_0=0 +y_0=0 +datum=NAD83 +units=m +no_defs +ellps=GRS80 +towgs84=0,0,0"))
+
+buff05 = MC_SWM_2005_buff
+buff14 = MC_SWM_2014_buff
+
+projection(buff05)
+projection(buff14)
+projection(No_GI_buff14)
+
+# Sebset the data
+buff05 = buff05[,c("OBJECTID","STRU_NO","YEAR_FINAL")]
+buff14 = buff14[,c("OBJECTID","STRU_NO","YEAR_FINAL")]
+
+#*********************************************************
+# RASTER DATA
+lulc01.raw = raster(paste0(dir,'GIS/National/NLCD/NLCD2001/nlcd_2001_landcover/nlcd_2001_landcover_2011_edition_2014_10_10.img'))
+lulc11.raw = raster(paste0(dir,'GIS/National/NLCD/NLCD2011/nlcd_2011_landcover/nlcd_2011_landcover_2011_edition_2014_10_10.img'))
+
+
+
+```
+
+# SELECT DATA
+```{r}
+#*********************************************************************
+#()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()
+#*********************************************************************
+# Convert to Common Name to USE in ANALYSIS
+REGION = No_GI_buff14 # could be buff05, buff15, No_GI_buff14
+RASTER.raw = lulc11.raw # could be lulc01.raw or lulc11.raw
+BC = BG15 # could be BG00 or BG15
+#*********************************************************************
+#()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()
+#*********************************************************************
+```
+
+# Clip to specific extent
+
+```{r}
+
+RASTER.raw = crop(RASTER.raw,BC)
+plot(RASTER.raw)
+
+
+```
+
+# Reclassify Landcover data
+```{r}
+
+vals<-unique(values(RASTER.raw))
+vals
+
+# creating vector of new values
+newvals = as.integer(substr(vals, 1, nchar(vals)-1))
+# replace the "1" with "9" because it water similar to the 9 categories
+# newvals = replace(newvals, newvals==1, 9) # this replaces 1 with 9 (no longer keeping open water and wetlands in same category)
+
+recl<-matrix(c(vals, newvals),ncol=2)
+recl
+
+landuse<-reclassify(RASTER.raw, rcl=recl)
+plot(landuse, legend=FALSE, axes=FALSE)
+
+
+```
+
+# Extract the values of the landcover raster for each zone. 
+* This produces a list of raster cells for each region
+```{r}
+# crop, rasterize and mask 
+cr<-crop(landuse, REGION)
+fr<-rasterize(REGION, cr)
+lr<-mask(x=cr, mask=fr)
+
+# You can do the same calculation using the full state raster
+# ext<-extract(RASTER, REGION, method='simple')
+
+# this takes a little time
+detach(package:tidyr) 
+ext<-extract(lr, REGION, method='simple',by.id=TRUE) #by.id=T for overlapping buffers
+class(ext)  # a list
+## [1] "list"
+length(ext) # three elements, a vector of land use values for each region
+## [1] 3472 for buff05, 9055 for buff14, 7818 for No_GI 1/8 separation
+
+```
+
+# Tabulate Land Use
+```{r}
+# Function to tabulate land use by region and return 
+# a data.frame
+tabFunc<-function(indx, extracted, region, regname) {
+  dat<-as.data.frame(table(extracted[[indx]]))
+  dat$name<-region[[regname]][[indx]]
+  return(dat)
+}
+
+
+# run through each region and compute a table of the count
+# of raster cells by land use. Produces a list (see below)
+
+#*********************************************************************
+#()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()
+#*********************************************************************
+# change to "STRU_NO" if GI Buffers, "ID" if random points,  "GEO_ID" if BG
+tabs<-lapply(seq(ext), tabFunc, ext, REGION, "ID") # ** CHANGE THIS
+#*********************************************************************
+#()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()
+#*********************************************************************
+
+# assemble into one data frame
+tabs<-do.call("rbind",tabs )
+
+```
+
+# name the land uses
+```{r}
+
+# select out unique land use values & and convert from factor to integer
+lvls = levels(factor(tabs$Var1))
+lvls = as.integer(lvls)
+lvls
+# 4 = Forest
+# 8 = Ag
+# 2 = Developed
+# 3 = Barren
+# 5 = Shrub
+# 7 = Grassland
+# 9 = Wetland
+# 1 = Water
+
+# create vector of land use names based on order of number levels
+lvls
+lvls2 = as.character(lvls)
+lvls2
+library(plyr) # new name is on right
+lbls = revalue(lvls2, c("4" = "Forest", "8" = "Agriculture", 
+                       "2" = "Developed","3" = "BarrenLand",
+                       "5" = "Shrubland", "7" = "Grassland", 
+                       "1" = "Water","9"="Wetland"))
+detach(package:plyr)
+lvls2
+lbls
+tabs$Var1<-factor(tabs$Var1, levels=lvls,labels=lbls)
+
+
+
+```
+
+
+# Calculate % LULC
+```{r}
+# use the spread function from tidyr to make nicer
+library(dplyr)
+library(tidyr)
+LULC_Table = tabs%>%
+  group_by(name) %>% # group by region
+  mutate(totcells=sum(Freq), # how many cells overall
+         percent.area=round(100*Freq/totcells,2)) %>% #cells by landuse/total cells
+  dplyr::select(-c(Freq, totcells)) %>% # there is a select func in raster so need to specify
+  spread(key=Var1, value=percent.area, fill=0) # make wide format
+
+
+
+```
+
+# Change Name and Write Out
+```{r}
+#*********************************************************************
+#()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()
+#*********************************************************************
+# Change to "STRU_NO" if GI Buffers,"ID" if NO_GI buff, "GEO_ID" if BGs, 
+names(LULC_Table)[1] = "ID" 
+#*********************************************************************
+#()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()
+#*********************************************************************
+
+# write.csv(LULC_Table, paste0(dir,'GIS/DC/NLCD/NLCD2001_MontCo_GI_Buffer2005.csv'), row.names=F)
+# write.csv(LULC_Table, paste0(dir,'GIS/DC/NLCD/NLCD2011_MontCo_GI_Buffer2014.csv'), row.names=F)
+
+# write.csv(LULC_Table, paste0(dir,'GIS/DC/NLCD/NLCD2001_MontCo_No_GI_Buffer2014_8thSep.csv'), row.names=F)
+# write.csv(LULC_Table, paste0(dir,'GIS/DC/NLCD/NLCD2011_MontCo_No_GI_Buffer2014_8thSep.csv'), row.names=F)
+
+
+```
+
+
+
