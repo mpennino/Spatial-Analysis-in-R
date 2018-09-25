@@ -1,0 +1,429 @@
+---
+title: "Census data in GI or No GI Buffers for Montgomery County"
+author: "Michael Pennino"
+date: "November 17, 2017"
+output: html_document
+---
+
+# Goal is to calculate CENSUS data within multiple buffer polygons
+* Using Intersect Tool
+* Census Data was downloaded from: https://factfinder.census.gov 
+* The Census data was downloaded at the block group level with GEOIDs
+
+# Import Data
+```{r}
+library(sp)
+library(ggplot2)
+library(raster)
+library(rgdal)
+library(rgeos)
+library(maptools)
+library(foreign)
+
+# IMPORTING DATA
+dir = "/Users/michaelpennino/Documents/G-Drive/"
+
+# GI BUFFER POLYGONS
+MC_SWM_2005_buff = readOGR(paste0(dir,'GIS/DC/Green_Infrastructure/GI_Buffer'),
+                 'MC_SWM_2005_16th_mile_buff')
+
+MC_SWM_2014_buff = readOGR(paste0(dir,'GIS/DC/Green_Infrastructure/GI_Buffer'),
+                           'MC_SWM_2014_16th_mile_buff')
+
+# Add STRU_NO number to the GI Buffers
+MC_SWM_2005_buff$STRU_NO=  seq.int(nrow(MC_SWM_2005_buff))
+MC_SWM_2014_buff$STRU_NO=  seq.int(nrow(MC_SWM_2014_buff))
+
+
+# NO_GI_BUFFER (The Control)
+
+# For 1/8 mile separation
+No_GI_buff14 = readOGR(paste0(dir,'GIS/DC/Green_Infrastructure/GI_Buffer'),
+                       'No_GI_buff14_16th_mile_8thSep_Mont') 
+
+
+# project to be same as other buffers
+No_GI_buff14 <- spTransform(No_GI_buff14, CRS("+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=23 +lon_0=-96 +x_0=0 +y_0=0 +datum=NAD83 +units=m +no_defs +ellps=GRS80 +towgs84=0,0,0"))
+projection(MC_SWM_2005_buff)
+projection(No_GI_buff14)
+
+# CENSUS DATA BY BLOCK GROUP
+# This was produced by first compiling all CENSUS data in excel and saving as CSV file
+census00 =  read.csv(paste0(dir,'/NatureNet/Social Data/GIS/Temporal/MontgomeryCo_CENSUS_BG_2000.csv'))
+census15 =  read.csv(paste0(dir,'/NatureNet/Social Data/GIS/Temporal/MontgomeryCo_CENSUS_BG_2015.csv'))
+
+nrow(census00) # 552
+nrow(census15) # 614
+
+#***************************************************
+#***************************************************
+# BLOCK GROUP SHAPEFILES
+BG00 = readOGR(paste0(dir,'/GIS/DC/Census/Montgomery_County/Census Block Groups'),
+               'MontgomeryCo_Block_Groups_2000_usgs')
+BG15 = readOGR(paste0(dir,'/GIS/DC/Census/Montgomery_County/Census Block Groups'),
+               'MontgomeryCo_Block_Groups_2015_usgs')
+
+nrow(BG00) # 582
+nrow(BG15) # 641
+
+# Add GEO_ID 
+BG15$GEO_ID = as.character(BG15$AFFGEOID)
+
+# add trailing zeros 
+library(stringi)
+BG00$TRACT = as.character(BG00$TRACT)
+BG00$TRACT1 = stri_pad_left(BG00$TRACT, 6, 0)
+BG00$GEOID1 = "1500000US24"
+BG00$GEO_ID = paste0(BG00$GEOID1,BG00$COUNTY,BG00$TRACT1,BG00$BLKGROUP)
+
+nchar(BG00$GEO_ID[1])
+nchar(BG15$GEO_ID[1])
+  
+# * First need to import BG shapefiles for whole Maryland State and then clip to Montgomery County Extent and save
+# * Done this already, so don't need to do it again
+# MC15 = readOGR(paste0(dir,'/GIS/DC/Census/Montgomery_County/Census Block Groups'),
+#                'MontgomeryCo_Block_Groups_USGS')
+# 
+# # BG00  = BG15
+# MD00 = readOGR(paste0(dir,'/GIS/DC/Census/Montgomery_County/Census Block Groups/2000'),
+#                'MD_Block_Groups_2000')
+# MD15 = readOGR(paste0(dir,'/GIS/DC/Census/Montgomery_County/Census Block Groups/2015'),
+#                'MD_Block_Groups_2015')
+# 
+# MC15 <- spTransform(MC15, CRS("+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=23 +lon_0=-96 +x_0=0 +y_0=0 +datum=NAD83 +units=m +no_defs +ellps=GRS80 +towgs84=0,0,0"))
+# MD00 <- spTransform(MD00, CRS("+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=23 +lon_0=-96 +x_0=0 +y_0=0 +datum=NAD83 +units=m +no_defs +ellps=GRS80 +towgs84=0,0,0"))
+# MD15 <- spTransform(MD15, CRS("+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=23 +lon_0=-96 +x_0=0 +y_0=0 +datum=NAD83 +units=m +no_defs +ellps=GRS80 +towgs84=0,0,0"))
+# 
+# projection(MC15)
+# projection(MD00)
+# projection(MD15)
+# 
+# nrow(MC15) # 614
+# nrow(MD00) # 3679
+# nrow(MD15) # 3916
+# 
+# # Clip to specific extent
+# MontgomeryCo_2000_BG = crop(MD00,MC15) # crop(input, clip extent)
+# MontgomeryCo_2015_BG = crop(MD15,MC15) # crop(input, clip extent)
+# 
+# # Check Projections
+# projection(MC15)
+# projection(MontgomeryCo_2000_BG)
+# projection(MontgomeryCo_2015_BG)
+# 
+# #Checking if clip worked
+# plot(MD00)
+# plot(MontgomeryCo_2000_BG, border="red",add=T)
+# plot(MontgomeryCo_2015_BG, border="blue",add=T)
+# 
+# writeOGR(MontgomeryCo_2000_BG, layer="MontgomeryCo_Block_Groups_2000_usgs", paste0(dir,'GIS/DC/Census/Montgomery_County/Census Block Groups'), driver="ESRI Shapefile")
+# writeOGR(MontgomeryCo_2015_BG, layer="MontgomeryCo_Block_Groups_2015_usgs", paste0(dir,'GIS/DC/Census/Montgomery_County/Census Block Groups'), driver="ESRI Shapefile")
+
+
+```
+
+# Plotting to make sure all spatial layers line up
+```{r}
+#**********************************************************************
+#**********************************************************************
+
+
+plot(BG00)
+plot(MC_SWM_2005_buff,border="red",add=T)
+plot(No_GI_buff14,border="blue",add=T)
+
+plot(BG15)
+plot(MC_SWM_2014_buff,border="red",add=T)
+plot(No_GI_buff14,border="blue",add=T)
+
+```
+
+
+# Select Data
+```{r}
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+#*********************************************************************
+#()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()
+#*********************************************************************
+# Choose Data
+BG = BG00 # could be BG00 or BG15
+census = census00 # could be census00 or census15
+buff = No_GI_buff14 # could be  MC_SWM_2005_buff or MC_SWM_2014_buff or No_GI_buff14
+#*********************************************************************
+#()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()
+#*********************************************************************
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+```
+
+# Join Census Data to Block Groups Shapefile using GEO_ID
+```{r}
+
+BG@data = data.frame(BG@data, census[match(BG@data[,"GEO_ID"], census[,"GEO_ID"]),])
+
+BG_census = BG
+plot(BG_census)
+plot(buff,add=T)
+
+# Note that the Census BG shapefile GEO_IDs and the Census fact finder data file don't have 1000% matching GEO_IDs, resulting in NAs for some BGs. 
+
+```
+
+# Step 1: Intersect
+* Can skip since saved output in next chunk
+```{r}
+# intersect from raster package
+#detach(package:dplyr) 
+projection(BG_census)
+projection(buff)
+
+timein = Sys.time()
+pi1 <- intersect(BG_census, buff)
+timeout = Sys.time(); timeout - timein
+# Time difference of 5.309071 mins
+
+# saveRDS(pi1, file='/Users/michaelpennino/Documents/G-Drive/NatureNet/Data/mont_buff05_Census00_intersect.rds')
+# saveRDS(pi1, file='/Users/michaelpennino/Documents/G-Drive/NatureNet/Data/mont_buff15_Census15_intersect.rds')
+# saveRDS(pi1, file='/Users/michaelpennino/Documents/G-Drive/NatureNet/Data/mont_No_GI_buff14_Census00_intersect.rds')
+# saveRDS(pi1, file='/Users/michaelpennino/Documents/G-Drive/NatureNet/Data/mont_No_GI_buff14_Census15_intersect.rds')
+
+```
+
+# Import Intersect output
+* Select the appropriate one based on which year and buffer current running
+```{r}
+pi1 = readRDS('/Users/michaelpennino/Documents/G-Drive/NatureNet/Data/mont_buff05_Census_intersect.rds')
+pi1 = readRDS('/Users/michaelpennino/Documents/G-Drive/NatureNet/Data/mont_buff15_Census_intersect.rds')
+pi1 = readRDS('/Users/michaelpennino/Documents/G-Drive/NatureNet/Data/mont_No_GI_buff14_Census00_intersect.rds')
+pi1 = readRDS('/Users/michaelpennino/Documents/G-Drive/NatureNet/Data/mont_No_GI_buff14_Census15_intersect.rds')
+
+
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+```
+
+# Row Check
+```{r}
+
+nrow(pi1) # 5235 for buff05, 13429 for buff15, 9483 for no_GI, 9483 for no_GI14 for 1/8 sep, 9421 for no_GI14 census00
+nrow(buff) # 3472 for buff05, 9055 for buff15, 7818 for no_GI14 for 1/8 sep, 7818 for no_GI14 census00
+
+#*********************************************************************
+#()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()
+#*********************************************************************
+# Choose either STRU_NO if SWM buffer, or ID if random buffer
+nrow(as.data.frame(table(buff$STRU_NO))) # 3472 for buff05, 9055 for buff15, 7818 for no_GI for 1/8 sep
+nrow(as.data.frame(table(pi1$STRU_NO))) # # 3472 for buff05, 9055 for buff15, 7818 for no_GI for 1/8 sep, this confirms that the number of unique STRU_NO is same as number unique Buffs
+
+nrow(No_GI_buff14) # 7818 for No_GI14 census00 and census15 1/8 sep
+nrow(as.data.frame(unique(No_GI_buff14$ID))) # 7818 for No_GI14 1/8 sep
+
+nrow(as.data.frame(table(pi1$ID))) # 7818 for No_GI14 census00 and census15 1/8 sep
+ 
+#*********************************************************************
+#()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()
+#*********************************************************************
+
+
+```
+
+
+# Find if any un-intersected buffers
+* if so, run this code
+* Already Checked, and don't need to run this code
+```{r}
+
+# now find the buffers that don't intersect with BGs
+
+# for MC_SWM_2005_buff
+selectedRows  = (!MC_SWM_2005_buff$STRU_NO %in% pi1$STRU_NO) # gives rows where not matching 
+test = MC_SWM_2005_buff[selectedRows,] # this is the point buffer that is not near SWM
+nrow(test) # 0
+
+# for MC_SWM_2014_buff
+selectedRows  = (!MC_SWM_2014_buff$STRU_NO %in% pi1$STRU_NO) # gives rows where not matching 
+test = MC_SWM_2014_buff[selectedRows,] # this is the point buffer that is not near SWM
+nrow(test) # 0
+
+# for No_GI_buff14 Census00
+selectedRows  = (!No_GI_buff14$ID %in% pi1$ID) # gives rows where not matching (using No_GI_buff00 for 2000 and 2015)
+test = No_GI_buff14[selectedRows,] # this is the point buffer that is not near SWM
+nrow(test) # 0
+
+# for No_GI_buff14 Census15
+selectedRows  = (!No_GI_buff14$ID %in% pi1$ID) # gives rows where not matching (using No_GI_buff00 for 2000 and 2015)
+test = No_GI_buff14[selectedRows,] # this is the point buffer that is not near SWM
+nrow(test) # 0
+
+# This indicates that all buffers were intersected in teh block groups
+
+# No need to run this code further
+
+# Going to remove the extra random points for 2015 so that same number of random points used for 2000 and 2015
+BG00@data = data.frame(BG00@data, census[match(BG00@data[,"GEO_ID"], census00[,"GEO_ID"]),])
+BG00_census = BG00
+
+# timein = Sys.time()
+# pi2 <- intersect(BG00_census, No_GI_buff15)
+# timeout = Sys.time(); timeout - timein
+# Time difference of 4.37049 mins
+# saveRDS(pi2, file='/Users/michaelpennino/Documents/G-Drive/NatureNet/Data/balt_pi2_Census_intersect.rds')
+pi2 = readRDS('/Users/michaelpennino/Documents/G-Drive/NatureNet/Data/balt_pi2_Census_intersect.rds')
+
+
+selectedRows  = (!No_GI_buff15$ID %in% pi2$ID) # gives rows where not matching (using No_GI_buff00 for 2000 and 2015)
+temp = No_GI_buff15[selectedRows,] # These are the IDs for points thare are in water and need to remove from intersection I made for 2015 data
+nrow(as.data.frame(unique(temp$ID))) # 101
+
+nrow(temp) #101
+nrow(pi1) # 8742 for no_GI 1/8 sep, 1821 buff00, 8863 for buff15, number of buffers after intersect 
+
+# this produces the random points I want to keep (should be 3006)
+pi = subset(pi1, !pi2$ID %in% temp$ID) 
+
+nrow(pi) # 8605 for No_GI 1/8 sep, 8584 for buff15
+nrow(as.data.frame(unique(pi$ID))) # 7437 when 1/8 sep, 3006, 
+nrow(as.data.frame(unique(pi2$ID))) # 7437 when 1/8 sep, so, 2000 and 2015 data now have same number of unique IDs
+
+# Check if all IDs match
+# All the matching values are found with the intersect function, from the Set Operations. 
+#All the values in both variables are found with the union function. 
+# So the values that are in the union, but not in the intersect are non-matching.
+v1 = pi$STRU_NO # use if GI buff
+v1 = pi$ID # use if No_GI buff
+v2 = pi2$ID
+matched <- as.data.frame(intersect(v1, v2))
+nrow(matched) # 7437, so looks like all rows are matched
+all <-  as.data.frame(union(v1, v2))
+non.matched <- all[!all %in% matched] # empty, so means all variables in both matched. 
+nrow(non.matched) # 7437, 
+```
+
+
+# Plot
+```{r}
+#***********************************************************************************************************************
+plot(BG)
+plot(No_GI_buff14,add=T)
+plot(pi1,border="red",add=T)
+# Find that the readon that pi = 3006 and No_GI_buff14 = 3083 
+# is because some of the SWM points lie outside of BG boundary in water.  
+
+plot(BG_census, axes=T); plot(buff, add=T); plot(pi1, add=T, col='red')
+
+
+```
+
+
+# Step 2: Extract areas from polygon objects then attach as attribute
+```{r}
+pi = pi1
+# Extract areas from polygon objects then attach as attribute
+areas <- data.frame(area=sapply(pi@polygons, FUN=function(x) {slot(x, 'area')}))
+row.names(areas) <- sapply(pi@polygons, FUN=function(x) {slot(x, 'ID')})
+
+# Combine attributes info and areas 
+attArea <- spCbind(pi, areas)
+```
+
+# Row Check
+```{r}
+#*********************************************************************
+#()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()
+#********************************************************************* 
+# Choose either STRU_NO if SWM buffer, or ID if random buffer
+nrow(as.data.frame(table(buff$STRU_NO))) # 3472 for buff05, 9055 for buff2015, 
+nrow(as.data.frame(table(attArea$STRU_NO))) # 3472 for buff05, 9055 for buff15,  this confirms that the number of unique STRU_NO is same as number unique Buffs
+
+# For NO_GI
+nrow(as.data.frame(table(buff$ID))) # 7818 for No_GI14 1/8 sep (Census00 and census15)
+nrow(as.data.frame(table(attArea$ID))) # 7818 for No_GI14 1/8 sep (Census00 and census15)
+
+
+# View(attArea)
+#*********************************************************************
+#()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()
+#*********************************************************************
+```
+
+# Conversions
+```{r}
+# convert factors to numeric
+attArea$MedianHouseValue = as.numeric(as.character(attArea$MedianHouseValue))
+attArea$IncomePercap = as.numeric(as.character(attArea$IncomePercap))
+attArea$PercBelowPov = as.numeric(as.character(attArea$PercBelowPov))
+attArea$Perc_White = as.numeric(as.character(attArea$Perc_White))
+attArea$Perc_Black = as.numeric(as.character(attArea$Perc_Black))
+attArea$Perc_Minority = as.numeric(as.character(attArea$Perc_Minority))
+attArea$Total_Pop = as.numeric(as.character(attArea$Total_Pop))
+attArea$YearBuilt = as.numeric(as.character(attArea$YearBuilt))
+
+# Checking for NA
+sum(is.na(attArea$MedianHouseValue)) # 419, 63 NoGI, 2573 for NoGI census00 (lots of unmatched GEO_IDs)
+sum(is.na(attArea$IncomePercap)) # 11, 28 NoGI, 2573 for NoGI census00 (lots of unmatched GEO_IDs)
+sum(is.na(attArea$PercBelowPov)) # 11, 28 NoGI, 2573 for NoGI census00 (lots of unmatched GEO_IDs)
+sum(is.na(attArea$Perc_White)) # 11, 28 NoGI, 2573 for NoGI census00 (lots of unmatched GEO_IDs)
+sum(is.na(attArea$Perc_Black)) # 11, 28 NoGI, 2573 for NoGI census00 (lots of unmatched GEO_IDs)
+sum(is.na(attArea$Perc_Minority)) # 11, 28 NoGI, 2573 for NoGI census00 (lots of unmatched GEO_IDs)
+sum(is.na(attArea$Total_Pop)) # 7, 27 NoGI, 2573 for NoGI census00 (lots of unmatched GEO_IDs)
+sum(is.na(attArea$YearBuilt)) # 318, 129 NoGI, 2573 for NoGI census00 (lots of unmatched GEO_IDs)
+```
+
+
+# Calculations
+```{r}
+# Add in area of buffer (pi*r^2) (330ft radius = 100.584 meters)
+attArea$Area_m2_buff = 3.141592653*100.584*100.584
+
+# calc percent of Buff
+attArea$Prop_Buff = attArea$area / attArea$Area_m2_buff
+
+# Calculate CENSUS Value per Facilitiy STRU_NO
+library(dplyr)
+
+# this aggregated the data by Facility STRU_NO and used proportion of buff in different CENSUS BGs to calculate mean CENSUS value
+# test = output[output$STRU_NO == 125,] # the calculation checks out
+attArea_df = as.data.frame(attArea)
+
+#*********************************************************************
+#()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()
+#*********************************************************************
+# Choose either STRU_NO if SWM buffer, or ID if No_GI buffer
+
+attArea2 = attArea_df %>% group_by(ID) %>% summarize(PropertyValue = sum(Prop_Buff*MedianHouseValue),
+                                                     IncomePerCapita = sum(Prop_Buff*IncomePercap),
+                                                     Total_Pop = sum(Prop_Buff*Total_Pop),
+                                                     Pop_Density = sum(Prop_Buff*Pop_Density),
+                                                     PercBelowPoverty = sum(Prop_Buff*PercBelowPov),
+                                                     Perc_White = sum(Prop_Buff*Perc_White),
+                                                     Perc_Black = sum(Prop_Buff*Perc_Black),
+                                                     Perc_Minority = sum(Prop_Buff*Perc_Minority),
+                                                     YearBuilt = sum(Prop_Buff*YearBuilt))
+
+#*********************************************************************
+#()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()
+#*********************************************************************
+
+nrow(as.data.frame(table(buff$STRU_NO))) # 3472 for buff05, 9055 for buff2015, 
+nrow(attArea2) # # 3472 for buff05, 9055 for buff15, 7818 for No_GI14 (census00 and census15), this is same as number of unique buffers at input.  
+nrow(as.data.frame(table(attArea2$STRU_NO))) #  # 3472 for buff05, 9055 for buff2015, 
+nrow(as.data.frame(table(attArea2$ID))) #  7818 for No_GI14 sep 1/8 (census00 and census15)
+
+
+# round off numbers
+attArea2$PropertyValue = round(attArea2$PropertyValue)
+attArea2$IncomePerCapita = round(attArea2$IncomePerCapita)
+attArea2$Total_Pop = round(attArea2$Total_Pop)
+nrow(attArea2) # 3472 for buff05, 9055 for buff2015, 7818 for No_GI 1/8 sep
+
+# write.csv(attArea2, paste0(dir,'/GIS/DC/Census/Data/CENSUS2000_in_MontCo_GI_Buff00.csv'), row.names=F)
+# write.csv(attArea2, paste0(dir,'/GIS/DC/Census/Data/CENSUS2015_in_MontCo_GI_Buff15.csv'), row.names=F)
+# write.csv(attArea2, paste0(dir,'/GIS/DC/Census/Data/CENSUS2000_in_MontCo_NoGI_Buff14.csv'), row.names=F)
+# write.csv(attArea2, paste0(dir,'/GIS/DC/Census/Data/CENSUS2015_in_MontCo_NoGI_Buff14.csv'), row.names=F)
+
+
+
+
+```
+
+
